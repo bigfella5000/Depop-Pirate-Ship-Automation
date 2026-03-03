@@ -2,9 +2,11 @@
 Author: Andrew Angel
 https://github.com/bigfella5000
 
-Place this file in its own folder before running.
+Place this file in a folder with requirements.txt before running.
 """
 
+import sys
+import subprocess
 import os
 import time
 import undetected_chromedriver as uc
@@ -12,6 +14,17 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+
+def install_requirements():
+	if os.path.isfile("requirements.txt"):
+		try:
+			subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+			print("Library installations complete.\n")
+		except Exception as e:
+			print(f"Error installing libraries: {e}")
+			sys.exit(1)
+	else:
+		print("\'requirements.txt\' not found. Skipping auto-install.\n")
 	
 def first_time_login(driver):
 	print("Log into Depop.")
@@ -261,6 +274,11 @@ def print_labels(driver):
 def main():
 	script_dir = os.path.dirname(os.path.abspath(__file__))
 	os.chdir(script_dir)
+
+	if (not os.path.isfile("gmail.txt")):
+		print("Welcome new user!")
+		install_requirements()
+
 	profile_dir = os.path.join(script_dir, "ScraperProfile")
 
 	options = uc.ChromeOptions()
@@ -268,12 +286,13 @@ def main():
 	options.add_argument("--no-sandbox")
 	options.add_argument("--disable-dev-shm-usage")
 	options.add_argument("--kiosk-printing")
-	driver = uc.Chrome(options=options, version_main=145) # We don't necessarily want to use this version. It should use whatever version is available
+	driver = uc.Chrome(options=options, version_main=145) # Don't necessarily want to use this version. It should use whatever version is available
 	wait = WebDriverWait(driver, 10)
 
 	try:
 		if (not os.path.isfile("gmail.txt")):
-			first_time_login(driver, wait)
+			print("Welcome new user!")
+			first_time_login(driver)
 
 		gmail = get_gmail()
 		if gmail == "": return
