@@ -27,20 +27,17 @@ def install_requirements():
 		print("\'requirements.txt\' not found. Skipping auto-install.\n")
 	
 def first_time_login(driver):
-	print("Log into Depop.")
+	print("Log into Depop. Must use a gmail account.")
 	driver.get("https://www.depop.com/")
 	input("Press enter here once you have logged into Depop...")
 
-	print("Log into Pirate Ship.")
+	print("Log into Pirate Ship (must use the same gmail).")
 	driver.get("https://ship.pirateship.com/ship")
 	input("Press enter here once you have logged into Pirate Ship...")
 
-	gmail = input("Enter your gmail email, then hit enter:\n")
+	gmail = input("Enter your gmail address here, then hit enter: ")
 	with open("gmail.txt", 'w') as file:
 		file.write(gmail)
-
-	with open("weights.txt", 'w') as file:
-		pass
 
 def get_gmail():
 	try:
@@ -52,7 +49,10 @@ def get_gmail():
 		return ""
 	
 def get_weights(filename="weights.txt"):
-	input("Fill in the weights.txt file with the weights of all the orders you want to process from top to bottom. When done, press enter here...")
+	if (not os.path.isfile("weights.txt")):
+		with open("weights.txt", 'w') as file:
+			pass
+	input("Fill in the weights.txt file (found in the same folder as this python script) with the weights of all the orders you want to process from top to bottom. When done, press enter here...")
 
 	try:
 		with open(filename, 'r') as file:
@@ -130,13 +130,16 @@ def parse_address(raw_text):
 			"street": street_address,
 			"city": city,
 			"state": state,
-			"zipcode": zipcode
+			"zipcode": zipcode,
+			"weight": None,
+			"tracking_label": None
 		}
 	except Exception as e:
 		# Catch any weird formatting issues
 		return {"error": True, "reason": str(e), "raw": raw_text}
 
 def parse_orders(driver, wait, num_weights):
+	# Move to "To Ship" tab
 	try:
 		to_ship_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'To ship')]")))
 		to_ship_button.click()
@@ -182,7 +185,7 @@ def fill_pirate_ship(driver, wait, parsed_orders, weights):
 	short_wait = WebDriverWait(driver, 2)
 	weights.reverse()
 	for i, order in enumerate(reversed(parsed_orders)):
-		current_weight = weights[i]
+		order["weight"] = weights[i]
 
 		print(f"Processing order for {order['name']}...")
 
@@ -205,7 +208,7 @@ def fill_pirate_ship(driver, wait, parsed_orders, weights):
 		zip_input.send_keys(order['zipcode'])
 		length_input.send_keys(str(13))
 		width_input.send_keys(str(10))
-		ounces_input.send_keys(current_weight)
+		ounces_input.send_keys(order["weight"])
 
 		packaging_dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[@data-name='packagePreset.packageDetails.package.packageTypeKey']")))
 		packaging_dropdown.click()
@@ -237,13 +240,57 @@ def fill_pirate_ship(driver, wait, parsed_orders, weights):
 		except TimeoutException:
 			print("Failed to detect 'Buy Label' button.")
 
+		time.sleep(2)
+		tracking_element = wait.until(EC.presence_of_element_located((By.XPATH, "//a[@data-dd-action-name='tracking number link']")))
+		tracking_label = tracking_element.text
+		order["tracking_label"] = tracking_label
+		print(f"Found tracking label for {order["name"]}: {tracking_label}")
+
+		input("DEBUG: Check here that the tracking label was grabbed correctly. Enter when ready to move to next order...")
+
 	print("Completed all orders!")
 
-def transfer_tracking_nums(driver, wait, num_orders):
-	# Transfer tracking numbers from Pirate Ship to Depop
-	# Make a list of the tracking numbers while still in Pirate Ship and then go back to Depop and loop through each order and paste in the respective tracking number
-	# Not sure if I'll have to log back into Depop. If so, just leave the Depop tab open when first switching to Pirate Ship
-	pass
+def transfer_tracking_nums(driver, wait, parsed_orders):
+	print("Opening Depop to transfer tracking numbers...")
+	driver.get("https://www.depop.com/sellinghub/sold-items/")
+	time.sleep(3)
+	input("DEBUG: Check that we are on the sell page in the \"all\" tab. Enter when ready to continue to transferring tracking numbers...")
+
+	try:
+		to_ship_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'To ship')]")))
+		to_ship_button.click()
+		time.sleep(2)
+	except Exception as e:
+		print("Could not find or click the 'To ship' button. Ensure the page loaded correctly.")
+		return []
+
+	order_cards = driver.find_elements(By.CSS_SELECTOR, ".styles_receiptsListWrapper__bdK1V")
+	num_cards = len(order_cards)
+
+	for i in range(num_cards):
+		current_cards = driver.find_elements(By.CSS_SELECTOR, ".styles_receiptsListWrapper__bdK1V")
+		card = current_cards[0]
+		card.click()
+		time.sleep(1)
+
+		try:
+			address_element = driver.find_element(By.CSS_SELECTOR, ".styles_address__X08rf") # This isn't necessarily constant, so find a way to make it always find the right CSS
+			raw_text = address_element.text
+			lines = [line.strip() for line in raw_text.strip().split('\n') if line.strip()]
+			name = lines.pop(0)
+			label = next(order["tracking_label"] for order in parsed_orders if order["name"] == name)
+
+			mark_shipped1 = wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[contains(text(), 'Mark as shipped')]")))
+			mark_shipped1.click()
+			tracking_input = wait.until(EC.presence_of_element_located((By.ID, "trackingNumber__input")))
+			tracking_input.send_keys(label)
+			mark_shipped2 = wait.until(EC.element_to_be_clickable((By.XPATH, f"//div[@role='dialog']//button[contains(text(), 'Mark as shipped')]")))
+			mark_shipped2.click()
+
+		except Exception as e:
+			print("\n[FLAG] Could not transfer tracking label number.")
+
+	print(f"\nSuccessfully copied over tracking label numbers.")
 
 def print_labels(driver):
 	print("Navigating to Pirate Ship labels...")
@@ -259,6 +306,7 @@ def print_labels(driver):
 	print(f"Found {len(print_buttons)} labels to print.")
 
 	for button in print_buttons:
+		# Might need to rediscover print button elements everytime we loop through
 		button.click() # Should automatically print to default printer since kiosk printing is enabled
 		time.sleep(3)
 
@@ -278,6 +326,19 @@ def main():
 	if (not os.path.isfile("gmail.txt")):
 		print("Welcome new user!")
 		install_requirements()
+		first_time_login(driver)
+
+	gmail = get_gmail()
+	if gmail == "":
+		print("Error: No email found.")
+		sys.exit(1)
+	print(f"Gmail: {gmail}")
+	
+	weights = get_weights()
+	if not weights:
+		print("Error: No weights found.")
+		sys.exit(1)
+	print(f"Found {len(weights)} weights.")
 
 	profile_dir = os.path.join(script_dir, "ScraperProfile")
 
@@ -291,26 +352,22 @@ def main():
 
 	try:
 		if (not os.path.isfile("gmail.txt")):
-			print("Welcome new user!")
 			first_time_login(driver)
-
-		gmail = get_gmail()
-		if gmail == "": return
-		print(f"Gmail: {gmail}")
-		
-		weights = get_weights()
-		if not weights:
-			return
-		print(f"Found {len(weights)} weights.")
 
 		depop_login(driver, wait, gmail)
 		parsed_orders = parse_orders(driver, wait, num_weights=len(weights))
 		if len(parsed_orders) == 0:
 			print("Error parsing orders.")
-			return
+			sys.exit(1)
 		fill_pirate_ship(driver, wait, parsed_orders, weights)
-		transfer_tracking_nums(driver, wait, num_orders=len(weights))
-		print_labels(driver, wait)
+		transfer_tracking_nums(driver, wait, parsed_orders)
+		
+		print_response = input("Would you like to print labels? (y/n): ")
+		while print_response not in ['y', 'n']:
+			print("Invalid response. Please respond with \'y\' or \'n\'.")
+			print_response = input("Would you like to print labels? (y/n): ")
+		if print_response == 'y':
+			print_labels(driver, wait)
 
 	finally:
 		print("Closing driver...")
