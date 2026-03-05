@@ -35,11 +35,12 @@ def first_time_login(driver):
 	driver.get("https://ship.pirateship.com/ship")
 	input("Press enter here once you have logged into Pirate Ship...")
 
-	gmail = input("Enter your gmail address here, then hit enter: ")
-	with open("gmail.txt", 'w') as file:
-		file.write(gmail)
-
 def get_gmail():
+	if (not os.path.isfile("gmail.txt")):
+		gmail = input("Enter your gmail address here, then hit enter: ")
+		with open("gmail.txt", 'w') as file:
+			file.write(gmail)
+
 	try:
 		with open("gmail.txt", 'r') as file:
 			gmail = file.read().strip()
@@ -280,7 +281,7 @@ def transfer_tracking_nums(driver, wait, parsed_orders):
 			name = lines.pop(0)
 			label = next(order["tracking_label"] for order in parsed_orders if order["name"] == name)
 
-			mark_shipped1 = wait.until(EC.element_to_be_clickable((By.XPATH, f"//*[contains(text(), 'Mark as shipped')]")))
+			mark_shipped1 = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.markAsShippedButton__sn8bt")))
 			mark_shipped1.click()
 			tracking_input = wait.until(EC.presence_of_element_located((By.ID, "trackingNumber__input")))
 			tracking_input.send_keys(label)
@@ -292,7 +293,7 @@ def transfer_tracking_nums(driver, wait, parsed_orders):
 
 	print(f"\nSuccessfully copied over tracking label numbers.")
 
-def print_labels(driver):
+def print_labels(driver, wait):
 	print("Navigating to Pirate Ship labels...")
 	driver.get("https://ship.pirateship.com/ship")
 	time.sleep(3)
@@ -307,8 +308,19 @@ def print_labels(driver):
 
 	for button in print_buttons:
 		# Might need to rediscover print button elements everytime we loop through
-		button.click() # Should automatically print to default printer since kiosk printing is enabled
-		time.sleep(3)
+		driver.execute_script("arguments[0].click();", button)
+		time.sleep(2)
+		try:
+			# TODO: Might need to download PDF using download label and then find path of downloaded label and have python manually print it from the path
+			download_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Download Label')]")))
+			driver.execute_script("window.print();")
+			print("Print command sent to browser.")
+			close_modal = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Close']")
+			close_modal.click()
+			time.sleep(1)
+		except Exception as e:
+			print(f"Modal handling failed: {e}")
+
 
 		# This is in case Pirate Ship opens a new tab when printing
 		if len(driver.window_handles) > 1:
@@ -318,6 +330,48 @@ def print_labels(driver):
 			time.sleep(1)
 
 	print("All labels sent to printer!")
+
+def test(driver, wait, gmail):
+	"""
+	Open Pirate Ship (a specific order page)
+	See if I can correctly scrape tracking label number and print it
+	Open Depop
+	Click on Mark as shipped button
+	See if I can paste in tracking label number into input box
+	"""
+	depop_login(driver, wait, gmail)
+	time.sleep(2)
+	driver.get("https://ship.pirateship.com/batch/558443368/shipment/708938288")
+	time.sleep(2)
+
+	tracking_element = wait.until(EC.presence_of_element_located((By.XPATH, "//a[@data-dd-action-name='tracking number link']")))
+	tracking_label = tracking_element.text
+	print(f"Found tracking label: {tracking_label}")
+
+	print("Opening Depop to transfer tracking numbers...")
+	driver.get("https://www.depop.com/sellinghub/sold-items/")
+	time.sleep(3)
+
+	try:
+		to_ship_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'To ship')]")))
+		to_ship_button.click()
+		time.sleep(2)
+	except Exception as e:
+		print("Could not find or click the 'To ship' button. Ensure the page loaded correctly.")
+		return []
+
+	current_cards = driver.find_elements(By.CSS_SELECTOR, ".styles_receiptsListWrapper__bdK1V")
+	card = current_cards[0]
+	card.click()
+	time.sleep(1)
+
+	# TODO: FIX ISSUE WITH mark_shipped1 NOT BEING CLICKED
+	mark_shipped1 = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button.markAsShippedButton__sn8bt")))
+	mark_shipped1.click()
+	tracking_input = wait.until(EC.presence_of_element_located((By.ID, "trackingNumber__input")))
+	tracking_input.send_keys(tracking_label)
+	input("Did it work?")
+
 	
 def main():
 	script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -326,7 +380,6 @@ def main():
 	if (not os.path.isfile("gmail.txt")):
 		print("Welcome new user!")
 		install_requirements()
-		first_time_login(driver)
 
 	gmail = get_gmail()
 	if gmail == "":
@@ -347,20 +400,21 @@ def main():
 	options.add_argument("--no-sandbox")
 	options.add_argument("--disable-dev-shm-usage")
 	options.add_argument("--kiosk-printing")
+	options.add_argument("--disable-print-preview")
 	driver = uc.Chrome(options=options, version_main=145) # Don't necessarily want to use this version. It should use whatever version is available
 	wait = WebDriverWait(driver, 10)
 
 	try:
-		if (not os.path.isfile("gmail.txt")):
-			first_time_login(driver)
+		# if (not os.path.isfile("gmail.txt")):
+		# 	first_time_login(driver)
 
-		depop_login(driver, wait, gmail)
-		parsed_orders = parse_orders(driver, wait, num_weights=len(weights))
-		if len(parsed_orders) == 0:
-			print("Error parsing orders.")
-			sys.exit(1)
-		fill_pirate_ship(driver, wait, parsed_orders, weights)
-		transfer_tracking_nums(driver, wait, parsed_orders)
+		# depop_login(driver, wait, gmail)
+		# parsed_orders = parse_orders(driver, wait, num_weights=len(weights))
+		# if len(parsed_orders) == 0:
+		# 	print("Error parsing orders.")
+		# 	sys.exit(1)
+		# fill_pirate_ship(driver, wait, parsed_orders, weights)
+		# transfer_tracking_nums(driver, wait, parsed_orders)
 		
 		print_response = input("Would you like to print labels? (y/n): ")
 		while print_response not in ['y', 'n']:
@@ -368,6 +422,8 @@ def main():
 			print_response = input("Would you like to print labels? (y/n): ")
 		if print_response == 'y':
 			print_labels(driver, wait)
+
+		# test(driver, wait, gmail)
 
 	finally:
 		print("Closing driver...")
